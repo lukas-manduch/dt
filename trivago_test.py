@@ -10,4 +10,5 @@ def test_hashing():
     assert hash_params(1, 2) == hash_params([1, 2]) == 3
     hash1 = hash_params({"a":1, "k":"m"}, "aa")
     hash2 = hash_params("aa", {"k":"m", "a":1})
+    assert hash_params("s", a=1, b="sa") == hash_params("s", b="sa", a=1) != 0
     assert hash1 == hash2
