@@ -8,9 +8,14 @@ import scipy
 
 # import constants
 
+REL_TRAIN_PATH = "data/trivago_test.csv"
+REL_TEST_PATH = "data/trivago_train.csv"
+COLUMNS = ["user_id", "reference"]
+CACHE_FOLDER = 'data'
+
 def debug_print(*args, level=1, **kwargs):
     if level<3:
-        print(" "*2*level, ends='')
+        print(" "*2*level, end='')
         print(*args, **kwargs)
 
 def simple_test():
@@ -86,18 +91,18 @@ def hash_params(*args, **kwargs):
 
 def get_trivago_datasets(columns, percentage=1, seed=1):
     """"""
-    folder_name = 'data'
-    columns = set(columns + ["user_id", "reference"])
+    columns = set(columns + COLUMNS)
     # Compute names
     file_name = str(hash_params(columns, percentage, seed))
     # Check for existence
-    os.makedirs(_script_relative(folder_name), exist_ok=True)
-    dataset_path = _script_relative(folder_name + file_name)
+    os.makedirs(_script_relative(CACHE_FOLDER), exist_ok=True)
+    dataset_path = _script_relative(CACHE_FOLDER + file_name)
 
+    # Check cached
     if not os.path.exists(dataset_path):
         # Create dataset
-        train_path = _script_relative('trivago/train.csv')
-        test_path = _script_relative('trivago/test.csv')
+        train_path = _script_relative(REL_TRAIN_PATH)
+        test_path = _script_relative(REL_TEST_PATH)
 
         train = __pandas_get_dataset(train_path)
         train = __pandas_strip_columns(train, columns)
