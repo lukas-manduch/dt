@@ -1,6 +1,9 @@
 import os
 import random
+
 from functools import partial, reduce
+from hashlib import md5
+from pickle import Pickler, Unpickler
 from typing import Iterable
 
 import numpy
@@ -66,8 +69,10 @@ def __pandas_trivago_invalid_rows(dataset):
     assert action_type in dataset
     debug_print("Preprocessing trivago", level=2)
     debug_print("Dataset shape before {}".format(dataset.shape), level=3)
-    dataset = dataset[dataset[action_type].isin(ACTIONS)].dropna()
-    debug_print("Dataset shape after {}".format(dataset.shape), level=3)
+    dataset = dataset[dataset[action_type].isin(ACTIONS)]
+    debug_print("Dataset shape drop actions {}".format(dataset.shape), level=3)
+    dataset = dataset.dropna()
+    debug_print("Dataset shape after nan {}".format(dataset.shape), level=3)
     return dataset
 
 def __pandas_trivago_drop_unique(dataset, column, percentage=0):
@@ -85,7 +90,7 @@ def __pandas_trivago_drop_unique(dataset, column, percentage=0):
     debug_print("Droping users, size after {}".format(len(result)), level=2)
     return result
 
-def __pandas_drop_top(dataset, column, percentage=0):
+def __pandas_drop_top(dataset, column, percentage=0, min_items=3):
     debug_print("Dropping top users {}%".format(percentage*100), level=2)
     dataset['count'] = dataset.groupby(column).transform('count')
     dataset.sort_values('count', inplace=True, ascending=False)
@@ -94,7 +99,7 @@ def __pandas_drop_top(dataset, column, percentage=0):
     debug_print("Count {}".format(len(drop_users)), level=3)
     debug_print("Largest before {}".format(list(dataset['count'])[0]), level=3)
     dataset = dataset[~dataset[column].isin(drop_users)]
-    dataset = dataset[dataset['count'] > 4]
+    dataset = dataset[dataset['count'] > min_items]
     debug_print("Largest after {}".format(list(dataset['count'])[0]), level=3)
     del dataset['count']
     return dataset
@@ -118,30 +123,17 @@ def hash_params(*args, **kwargs):
     """Return hash of all arguments.  Hash is same for
     different order of arguments"""
     # Helper function
-    def hash_recursive(arg_iterable, start=0):
-        if isinstance(arg_iterable, dict): # In dict, hash tuples
-            return hash_recursive(arg_iterable.items(), start)
-        else:
-            try: # Try if it is iterable
-                iterator = iter(arg_iterable)
-                item = next(iterator)
-                if item == arg_iterable:
-                    raise TypeError # Infinite cycle
-                # Update value
-                start = hash_recursive(item, start)
-                return hash_recursive(iterator, start) # Tail recursion
-            except TypeError: 
-                return hash(arg_iterable) + start
-            except StopIteration:
-                return start
-    #################
-    return hash_recursive([args, kwargs])
+    res = str(args) + str(kwargs)
+    m = md5()
+    m.update(res.encode('utf-8'))
+    return str(m.digest().hex())
 
 
 def get_trivago_datasets(columns, percentage=1, seed=1,
-                         uitems_min=2, uitem_max=-1):
+                         uitems_min=2):
     """Doc
         - uitem_min - minimum number of interaction for user
+        - lt_drop - how many % should be dropped from long tail
     """
     debug_print("Loading trivago datasets", level=0)
     columns = set(columns + COLUMNS)
@@ -158,20 +150,28 @@ def get_trivago_datasets(columns, percentage=1, seed=1,
         test_path = _script_relative(REL_TEST_PATH)
 
         train = __pandas_get_dataset(train_path)
-        train = __pandas_trivago_invalid_rows(train)
+        debug_print("Train shape before {}".format(train.shape))
         train = __pandas_strip_columns(train, columns)
+        train = __pandas_trivago_invalid_rows(train)
         __pandas_trivago_plot_density(train, USER_ID)
         train = __pandas_trivago_drop_unique(train, USER_ID, percentage=0)
-        train = __pandas_drop_top(train, USER_ID, percentage=0.03)
+        train = __pandas_drop_top(train, USER_ID, percentage=0.03, min_items=uitems_min)
+        debug_print("Train shape after {}".format(train.shape))
 
         test = __pandas_get_dataset(test_path)
         test = __pandas_trivago_invalid_rows(test)
         test = __pandas_strip_columns(test, columns)
         test = test[~test[USER_ID].isin(train[USER_ID].unique())]
+
         # Save dataset
+        debug_print("Saving dataset {}".format(dataset_path))
+        with open(dataset_path, "wb") as f:
+            Pickler(f).dump((train, test))
         #train.to_pickle(path=train_path)
         #test.to_pickle(path=test_path)
     else: # Load dataset
+        with open(dataset_path, "rb") as f:
+            train, test = Unpickler(f).load()
         pass
 
 
