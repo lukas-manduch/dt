@@ -16,8 +16,9 @@ REL_TRAIN_PATH = "data/trivago_train.csv"
 REL_TEST_PATH = "data/trivago_test.csv"
 USER_ID = "user_id"
 CACHE_FOLDER = 'data'
-COLUMNS = [USER_ID, "reference"]
+COLUMNS = sorted([USER_ID, "reference"])
 ACTIONS = ["clickout item", "interaction item image"]
+ACTION_TYPE = "action_type"
 
 
 def debug_print(*args, level=1, **kwargs):
@@ -65,11 +66,10 @@ def __pandas_strip_columns(dataset, columns):
     return dataset
 
 def __pandas_trivago_invalid_rows(dataset):
-    action_type = "action_type"
-    assert action_type in dataset
+    assert ACTION_TYPE in dataset
     debug_print("Preprocessing trivago", level=2)
     debug_print("Dataset shape before {}".format(dataset.shape), level=3)
-    dataset = dataset[dataset[action_type].isin(ACTIONS)]
+    dataset = dataset[dataset[ACTION_TYPE].isin(ACTIONS)]
     debug_print("Dataset shape drop actions {}".format(dataset.shape), level=3)
     dataset = dataset.dropna()
     debug_print("Dataset shape after nan {}".format(dataset.shape), level=3)
@@ -91,15 +91,22 @@ def __pandas_trivago_drop_unique(dataset, column, percentage=0):
     return result
 
 def __pandas_drop_top(dataset, column, percentage=0, min_items=3):
+    """Drop tails
+     - min items
+     - percentage - Percentage of top users to drop"""
     debug_print("Dropping top users {}%".format(percentage*100), level=2)
+
     dataset['count'] = dataset.groupby(column).transform('count')
     dataset.sort_values('count', inplace=True, ascending=False)
     unique_users = dataset[column].unique()
     drop_users = unique_users[:int(len(unique_users)*percentage)]
+
     debug_print("Count {}".format(len(drop_users)), level=3)
     debug_print("Largest before {}".format(list(dataset['count'])[0]), level=3)
+
     dataset = dataset[~dataset[column].isin(drop_users)]
     dataset = dataset[dataset['count'] > min_items]
+
     debug_print("Largest after {}".format(list(dataset['count'])[0]), level=3)
     del dataset['count']
     return dataset
@@ -124,6 +131,7 @@ def hash_params(*args, **kwargs):
     different order of arguments"""
     # Helper function
     res = str(args) + str(kwargs)
+    print(res)
     m = md5()
     m.update(res.encode('utf-8'))
     return str(m.digest().hex())
@@ -138,27 +146,32 @@ def get_trivago_datasets(columns, percentage=1, seed=1,
     debug_print("Loading trivago datasets", level=0)
     columns = set(columns + COLUMNS)
     # Compute names
-    file_name = str(hash_params(columns, percentage, seed))
+    file_name = str(hash_params(sorted(columns, reverse=True), percentage, seed))
     # Check for existence
     os.makedirs(_script_relative(CACHE_FOLDER), exist_ok=True)
     dataset_path = _script_relative(CACHE_FOLDER + file_name)
 
+    debug_print("Trying {}".format(dataset_path), level=2)
     # Check cached
     if not os.path.exists(dataset_path):
+        debug_print("Not found", level=2)
         # Create dataset
         train_path = _script_relative(REL_TRAIN_PATH)
         test_path = _script_relative(REL_TEST_PATH)
 
         train = __pandas_get_dataset(train_path)
         debug_print("Train shape before {}".format(train.shape))
-        train = __pandas_strip_columns(train, columns)
+        train = __pandas_strip_columns(train, columns | {ACTION_TYPE})
         train = __pandas_trivago_invalid_rows(train)
+        train = __pandas_strip_columns(train, columns)
+
         __pandas_trivago_plot_density(train, USER_ID)
         train = __pandas_trivago_drop_unique(train, USER_ID, percentage=0)
         train = __pandas_drop_top(train, USER_ID, percentage=0.03, min_items=uitems_min)
         debug_print("Train shape after {}".format(train.shape))
 
         test = __pandas_get_dataset(test_path)
+        test = __pandas_strip_columns(test, columns | {ACTION_TYPE})
         test = __pandas_trivago_invalid_rows(test)
         test = __pandas_strip_columns(test, columns)
         test = test[~test[USER_ID].isin(train[USER_ID].unique())]
@@ -171,6 +184,7 @@ def get_trivago_datasets(columns, percentage=1, seed=1,
         #test.to_pickle(path=test_path)
     else: # Load dataset
         with open(dataset_path, "rb") as f:
+            debug_print("Found", level=2)
             train, test = Unpickler(f).load()
         pass
 
