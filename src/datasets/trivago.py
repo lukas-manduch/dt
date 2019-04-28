@@ -18,7 +18,8 @@ REL_TEST_PATH = "data/trivago_test.csv"
 USER_ID = "user_id"
 REFERENCE =  "reference"
 CACHE_FOLDER = 'cached'
-COLUMNS = [USER_ID, REFERENCE]
+TIMESTAMP = 'timestamp'
+COLUMNS = [USER_ID, REFERENCE, TIMESTAMP]
 ACTIONS = ["clickout item", "interaction item image"]
 ACTION_TYPE = "action_type"
 
@@ -36,7 +37,11 @@ def simple_test():
 
 ###############################################################
 ############## PANDAS SPECIFIC FUNCTIONS ######################
+def __filename_modif(filename):
+    return filename+"mod"
+
 def __pandas_get_dataset(filename) -> pandas.DataFrame:
+    filename = __filename_modif(filename)
     if not os.path.exists(filename):
         raise FileNotFoundError(filename)
 
@@ -46,6 +51,29 @@ def __pandas_get_dataset(filename) -> pandas.DataFrame:
     debug_print("Length: {:,} x {:,}".format(dataset.shape[0], dataset.shape[1]))
     debug_print("Unique user_id count: {:,}".format(*dataset['user_id'].unique().shape), level=2)
     return dataset
+
+def __pandas_modify_datasets(*filenames):
+    sets = []
+    names = []
+    debug_print("Reindexing datasets {} ...".format(filenames), level=2)
+    for x in filenames:
+        if os.path.exists(__filename_modif(x)):
+            debug_print("Skip {}".format(x))
+            continue
+        sets.append(__pandas_strip_columns(pandas.read_csv(x), COLUMNS + [ACTION_TYPE]))
+        names.append(x)
+
+    for col in [USER_ID, REFERENCE]:
+        debug_print("Reindexing column {} ...".format(col), level=3)
+        uniq = set(chain(*map(lambda x: x[col], sets)))
+        counter = count()
+        mapped = {x: next(counter) for x in uniq}
+        for x in sets:
+            x[col] = x[col].map(mapped, na_action='ignore')
+            import gc
+            gc.collect()
+    for i in range(len(names)):
+        sets[i].to_csv(__filename_modif(names[i]))
 
 def __pandas_get_unique_values(field_name,
                                dataset: pandas.DataFrame) -> pandas.Series:
@@ -60,7 +88,7 @@ def __pandas_field_intersection(field_name, *datasets) -> Iterable:
     return reduce(numpy.intersect1d, lists) if datasets else []
 
 def __pandas_strip_columns(dataset, columns):
-    useless = columns ^ set(dataset.columns)
+    useless = set(columns) ^ set(dataset.columns)
     debug_print("Deleting from dataset {}".format(useless), level=2)
     debug_print("Dataset shape before {}".format(dataset.shape), level=3)
     dataset = dataset.drop(useless, axis=1)
@@ -98,7 +126,7 @@ def __pandas_drop_top(dataset, column, percentage=0, min_items=3):
      - percentage - Percentage of top users to drop"""
     debug_print("Dropping top users {}%".format(percentage*100), level=2)
 
-    dataset['count'] = dataset.groupby(column).transform('count')
+    dataset['count'] = dataset.groupby(column).transform('count').iloc[:,1]
     dataset.sort_values('count', inplace=True, ascending=False)
     unique_users = dataset[column].unique()
     drop_users = unique_users[:int(len(unique_users)*percentage)]
@@ -112,6 +140,20 @@ def __pandas_drop_top(dataset, column, percentage=0, min_items=3):
     debug_print("Largest after {}".format(list(dataset['count'])[0]), level=3)
     del dataset['count']
     return dataset
+
+def __pandas_drop_time(dataset, time=0):
+    assert not dataset[TIMESTAMP].empty
+    if time <= 0:
+        debug_print("Not droppping any time", level=2)
+        return dataset
+    high = max(dataset[TIMESTAMP])
+    print(high)
+    print(min(dataset[TIMESTAMP]))
+    debug_print("Dropping times {}".format(time), level=2)
+    debug_print("Shape before {}".format(dataset.shape), level=3)
+    tmp = dataset[dataset[TIMESTAMP] > high - time]
+    debug_print("Shape after {}".format(tmp.shape), level=3)
+    return tmp
 
 def __pandas_reindex_values(*datasets, column=''):
     """From 0 in column"""
@@ -134,18 +176,22 @@ def __pandas_trivago_plot_density(dataset, column, filename=None):
     # plt.show()
 
 
-def __pandas_to_coo(*datasets):
-    result = []
-    x = datasets[0]
-    rows = max(x[USER_ID]) + 1
-    cols = max(x[REFERENCE]) + 1
+def __pandas_to_coo(train, test):
+    rows = max(max(train[USER_ID]),   max(test[USER_ID])   ) + 1
+    cols = max(max(train[REFERENCE]), max(test[REFERENCE]) ) + 1
 
-    for x in datasets:
-        x['tmp'] = 1
-        matrix = coo_matrix((x['tmp'], (x[USER_ID], x[REFERENCE])), shape=(rows, cols))
-        del x['tmp']
-        result.append(matrix)
-    return result
+    train['tmp'] = 1
+    test['tmp'] = 1
+
+    matrix1 = coo_matrix((train['tmp'], (train[USER_ID], train[REFERENCE])),
+                         shape=(rows, cols))
+    matrix2 = coo_matrix((test['tmp'], (test[USER_ID], test[REFERENCE])),
+                         shape=(rows, cols))
+
+    del train['tmp']
+    del test['tmp']
+
+    return matrix1, matrix2
 ###############################################################
 
 def _script_relative(relative_path):
@@ -164,16 +210,18 @@ def hash_params(*args, **kwargs):
 
 
 def get_trivago_datasets(columns, percentage=1, seed=1,
-                         uitems_min=2, lt_drop=0):
-    """Doc
+                         uitems_min=2, lt_drop=0, time=0):
+    """Load train and test datasets
+        - percentage - how much of train could be dropped
         - uitem_min - minimum number of interaction for user
         - lt_drop - how many % should be dropped from long tail
+        - time - how many seconds from last action to keep - 0 = infinite
     """
     debug_print("Loading trivago datasets", level=0)
     columns = set(columns + COLUMNS)
     # Compute names, must be sorted, because sets are kinda random
     file_name = str(hash_params(sorted(columns, reverse=True), percentage, 
-                                seed, uitems_min, lt_drop))
+                                seed, uitems_min, lt_drop, time))
     # Check for existence
     os.makedirs(_script_relative(CACHE_FOLDER), exist_ok=True)
     dataset_path = _script_relative(os.path.join(CACHE_FOLDER, file_name))
@@ -186,8 +234,11 @@ def get_trivago_datasets(columns, percentage=1, seed=1,
         train_path = _script_relative(REL_TRAIN_PATH)
         test_path = _script_relative(REL_TEST_PATH)
 
+        __pandas_modify_datasets(train_path, test_path)
+
         train = __pandas_get_dataset(train_path)
         debug_print("Train shape before {}".format(train.shape))
+
         train = __pandas_strip_columns(train, columns | {ACTION_TYPE})
         train = __pandas_trivago_invalid_rows(train)
         train = __pandas_strip_columns(train, columns)
@@ -195,6 +246,7 @@ def get_trivago_datasets(columns, percentage=1, seed=1,
         __pandas_trivago_plot_density(train, USER_ID)
         train = __pandas_trivago_drop_unique(train, USER_ID, percentage=percentage)
         train = __pandas_drop_top(train, USER_ID, percentage=lt_drop, min_items=uitems_min)
+        train = __pandas_drop_time(train, time=time)
         debug_print("Train shape after {}".format(train.shape))
 
         test = __pandas_get_dataset(test_path)
@@ -202,10 +254,10 @@ def get_trivago_datasets(columns, percentage=1, seed=1,
         test = __pandas_trivago_invalid_rows(test)
         test = __pandas_strip_columns(test, columns)
         debug_print("Dropping non train {}".format(test.shape), level=2)
-        test = test[~test[USER_ID].isin(train[USER_ID].unique())]
+        # test = test[test[USER_ID].isin(train[USER_ID].unique())]
         debug_print("After non train {}".format(test.shape), level=2)
-        __pandas_reindex_values(train, test, column=USER_ID)
-        __pandas_reindex_values(train, test, column=REFERENCE)
+        # __pandas_reindex_values(train, test, column=USER_ID)
+        # __pandas_reindex_values(train, test, column=REFERENCE)
 
         # Save dataset
         debug_print("Saving dataset {}".format(dataset_path))
@@ -215,6 +267,7 @@ def get_trivago_datasets(columns, percentage=1, seed=1,
         with open(dataset_path, "rb") as f:
             debug_print("Found", level=2)
             train, test = Unpickler(f).load()
+    print(len(set(train[USER_ID]) & set(test[USER_ID])))
     return __pandas_to_coo(train, test)
 
 
