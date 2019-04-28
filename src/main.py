@@ -1,4 +1,61 @@
-﻿from datasets import trivago
+﻿import os
+import time
+from pickle    import Pickler, Unpickler
+
+import lightfm
+
+from scipy.sparse import coo_matrix
+
+from datasets import trivago
+from datasets.trivago import hash_params, _script_relative
+
+
+MODELS_FOLDER = 'models'
+
+def get_model(args_dict, train):
+    os.makedirs(_script_relative(MODELS_FOLDER), exist_ok=True) 
+    path = os.path.join(MODELS_FOLDER, hash_params(args_dict))
+    path = _script_relative(path)
+    print("Model path {}".format(path))
+
+    if os.path.exists(path):
+        print("FOUND cached model ")
+        with open(path, "rb") as f:
+            return Unpickler(f).load()
+
+    tbef = time.time()
+    print("Train start {}".format(tbef))
+    model = lightfm.LightFM(loss=args_dict['loss'])
+    model.fit(train, epochs=args_dict['epochs'])
+    taft = time.time()
+    print("Train end {}".format(taft, taft-tbef))
+
+    with open(path, "wb") as f:
+        print("Saving model")
+        Pickler(f).dump(model)
+
+    return model
+
+
+def load_normal_half():
+    train, test = trivago.get_trivago_datasets([], percentage=0.3, uitems_min=4, lt_drop=0.1)
+    args = {"epochs" : 30,
+            "loss"   : 'warp',
+            }
+    return train, test, get_model(args, train)
+
+def load_normal_half_with_lt():
+    args = {"percentage" : 0.5,
+            "uitems_min" : 4,
+            "lt_drop"    : 0,
+            }
+    train, test = trivago.get_trivago_datasets([], **args)
+    args = {"epochs" : 30,
+            "loss"   : 'warp',
+            }
+    return train, test, get_model(args, train)
 
 if __name__ == "__main__":
-	sets = trivago.get_trivago_datasets([], percentage=0.1)
+    train, test, model = load_normal_half()
+
+

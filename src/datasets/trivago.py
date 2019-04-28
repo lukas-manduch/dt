@@ -2,21 +2,23 @@ import os
 import random
 
 from functools import partial, reduce
-from hashlib import md5
-from pickle import Pickler, Unpickler
-from typing import Iterable
+from hashlib   import md5
+from itertools import chain, count
+from pickle    import Pickler, Unpickler
+from typing    import Iterable
 
 import numpy
 import pandas
-import scipy
 
+from scipy.sparse import coo_matrix
 # import constants
 
 REL_TRAIN_PATH = "data/trivago_train.csv"
 REL_TEST_PATH = "data/trivago_test.csv"
 USER_ID = "user_id"
-CACHE_FOLDER = 'data'
-COLUMNS = sorted([USER_ID, "reference"])
+REFERENCE =  "reference"
+CACHE_FOLDER = 'cached'
+COLUMNS = [USER_ID, REFERENCE]
 ACTIONS = ["clickout item", "interaction item image"]
 ACTION_TYPE = "action_type"
 
@@ -111,14 +113,39 @@ def __pandas_drop_top(dataset, column, percentage=0, min_items=3):
     del dataset['count']
     return dataset
 
+def __pandas_reindex_values(*datasets, column=''):
+    """From 0 in column"""
+    debug_print("Reindexing column {} ...".format(column), level=2)
+    assert column
+    uniq = numpy.unique(list(chain(*map(lambda x: x[column], datasets))))
+    counter = count()
+    mapped = {x: next(counter) for x in uniq}
+    debug_print("Users mapped {}".format(len(mapped)), level=3)
+    for x in datasets:
+        x[column] = x[column].map(mapped)
+    debug_print("Done", level=2)
+
 def __pandas_trivago_plot_density(dataset, column, filename=None):
     data = dataset[column].value_counts()
     import matplotlib.pyplot as plt
-    plt.hist(data)
+    # plt.hist(data)
     # plt.ylim(top=100)
     # plt.xlim(left=30, right=1400)
-    plt.show()
+    # plt.show()
 
+
+def __pandas_to_coo(*datasets):
+    result = []
+    x = datasets[0]
+    rows = max(x[USER_ID]) + 1
+    cols = max(x[REFERENCE]) + 1
+
+    for x in datasets:
+        x['tmp'] = 1
+        matrix = coo_matrix((x['tmp'], (x[USER_ID], x[REFERENCE])), shape=(rows, cols))
+        del x['tmp']
+        result.append(matrix)
+    return result
 ###############################################################
 
 def _script_relative(relative_path):
@@ -131,25 +158,25 @@ def hash_params(*args, **kwargs):
     different order of arguments"""
     # Helper function
     res = str(args) + str(kwargs)
-    print(res)
     m = md5()
     m.update(res.encode('utf-8'))
     return str(m.digest().hex())
 
 
 def get_trivago_datasets(columns, percentage=1, seed=1,
-                         uitems_min=2):
+                         uitems_min=2, lt_drop=0):
     """Doc
         - uitem_min - minimum number of interaction for user
         - lt_drop - how many % should be dropped from long tail
     """
     debug_print("Loading trivago datasets", level=0)
     columns = set(columns + COLUMNS)
-    # Compute names
-    file_name = str(hash_params(sorted(columns, reverse=True), percentage, seed))
+    # Compute names, must be sorted, because sets are kinda random
+    file_name = str(hash_params(sorted(columns, reverse=True), percentage, 
+                                seed, uitems_min, lt_drop))
     # Check for existence
     os.makedirs(_script_relative(CACHE_FOLDER), exist_ok=True)
-    dataset_path = _script_relative(CACHE_FOLDER + file_name)
+    dataset_path = _script_relative(os.path.join(CACHE_FOLDER, file_name))
 
     debug_print("Trying {}".format(dataset_path), level=2)
     # Check cached
@@ -166,39 +193,31 @@ def get_trivago_datasets(columns, percentage=1, seed=1,
         train = __pandas_strip_columns(train, columns)
 
         __pandas_trivago_plot_density(train, USER_ID)
-        train = __pandas_trivago_drop_unique(train, USER_ID, percentage=0)
-        train = __pandas_drop_top(train, USER_ID, percentage=0.03, min_items=uitems_min)
+        train = __pandas_trivago_drop_unique(train, USER_ID, percentage=percentage)
+        train = __pandas_drop_top(train, USER_ID, percentage=lt_drop, min_items=uitems_min)
         debug_print("Train shape after {}".format(train.shape))
 
         test = __pandas_get_dataset(test_path)
         test = __pandas_strip_columns(test, columns | {ACTION_TYPE})
         test = __pandas_trivago_invalid_rows(test)
         test = __pandas_strip_columns(test, columns)
+        debug_print("Dropping non train {}".format(test.shape), level=2)
         test = test[~test[USER_ID].isin(train[USER_ID].unique())]
+        debug_print("After non train {}".format(test.shape), level=2)
+        __pandas_reindex_values(train, test, column=USER_ID)
+        __pandas_reindex_values(train, test, column=REFERENCE)
 
         # Save dataset
         debug_print("Saving dataset {}".format(dataset_path))
         with open(dataset_path, "wb") as f:
             Pickler(f).dump((train, test))
-        #train.to_pickle(path=train_path)
-        #test.to_pickle(path=test_path)
     else: # Load dataset
         with open(dataset_path, "rb") as f:
             debug_print("Found", level=2)
             train, test = Unpickler(f).load()
-        pass
+    return __pandas_to_coo(train, test)
 
-
-    # Return
 
 if __name__ == "__main__":
-    # Load datasets
-    get_trivago_datasets([], percentage=0.1)
+    print("hi")
 
-    # print(len(__pandas_field_intersection('user_id', test, test)))
-
-def get_letter_type(letter):
-    if letter.lower() in 'aeiou':
-        return 'vowel'
-    else:
-        return 'consonant'
