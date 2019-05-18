@@ -147,8 +147,6 @@ def __pandas_drop_time(dataset, time=0):
         debug_print("Not droppping any time", level=2)
         return dataset
     high = max(dataset[TIMESTAMP])
-    print(high)
-    print(min(dataset[TIMESTAMP]))
     debug_print("Dropping times {}".format(time), level=2)
     debug_print("Shape before {}".format(dataset.shape), level=3)
     tmp = dataset[dataset[TIMESTAMP] > high - time]
@@ -170,9 +168,12 @@ def __pandas_reindex_values(*datasets, column=''):
 def __pandas_trivago_plot_density(dataset, column, filename=None):
     data = dataset[column].value_counts()
     import matplotlib.pyplot as plt
-    # plt.hist(data)
+    plt.hist(data, bins=20)
     # plt.ylim(top=100)
-    # plt.xlim(left=30, right=1400)
+    plt.yscale('log')
+    #plt.xlim(left=3, right=303)
+    print(_script_relative("plot"))
+    plt.savefig(_script_relative("plot.png"))
     # plt.show()
 
 
@@ -243,7 +244,6 @@ def get_trivago_datasets(columns, percentage=1, seed=1,
         train = __pandas_trivago_invalid_rows(train)
         train = __pandas_strip_columns(train, columns)
 
-        __pandas_trivago_plot_density(train, USER_ID)
         train = __pandas_trivago_drop_unique(train, USER_ID, percentage=percentage)
         train = __pandas_drop_top(train, USER_ID, percentage=lt_drop, min_items=uitems_min)
         train = __pandas_drop_time(train, time=time)
@@ -254,7 +254,7 @@ def get_trivago_datasets(columns, percentage=1, seed=1,
         test = __pandas_trivago_invalid_rows(test)
         test = __pandas_strip_columns(test, columns)
         debug_print("Dropping non train {}".format(test.shape), level=2)
-        # test = test[test[USER_ID].isin(train[USER_ID].unique())]
+        test = test[test[USER_ID].isin(train[USER_ID].unique())]
         debug_print("After non train {}".format(test.shape), level=2)
         # __pandas_reindex_values(train, test, column=USER_ID)
         # __pandas_reindex_values(train, test, column=REFERENCE)
@@ -267,7 +267,9 @@ def get_trivago_datasets(columns, percentage=1, seed=1,
         with open(dataset_path, "rb") as f:
             debug_print("Found", level=2)
             train, test = Unpickler(f).load()
+    print(len(set(test[USER_ID])))
     print(len(set(train[USER_ID]) & set(test[USER_ID])))
+    __pandas_trivago_plot_density(train, USER_ID)
     return __pandas_to_coo(train, test)
 
 

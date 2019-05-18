@@ -42,8 +42,8 @@ def get_model(args_dict, train):
 def load_normal_half_one_month():
     args = {"percentage" : 0.5,
             "uitems_min" : 4,
-            "lt_drop" : 0.1,
-            "time" : 3600*24*30,
+            "lt_drop" : 0.0,
+            "time" : 3600*24*7,
             }
     train, test = trivago.get_trivago_datasets([], **args)
     args.update(
@@ -57,7 +57,7 @@ def load_normal_half_one_month():
 def load_normal_half():
     args = {"percentage" : 0.5,
             "uitems_min" : 4,
-            "lt_drop" : 0.1,
+            "lt_drop" : 0.0,
             }
     train, test = trivago.get_trivago_datasets([], **args)
     args.update(
@@ -70,7 +70,7 @@ def load_normal_half():
 def load_normal_half_with_lt():
     args = {"percentage" : 0.5,
             "uitems_min" : 4,
-            "lt_drop"    : 0,
+            "lt_drop"    : 0.001,
             }
     train, test = trivago.get_trivago_datasets([], **args)
     args.update(
@@ -80,15 +80,34 @@ def load_normal_half_with_lt():
             )
     return train, test, get_model(args, train)
 
-if __name__ == "__main__":
-    # train, test, model = load_normal_half_with_lt()
-    train, test, model = load_normal_half()
-    # train, test, model = load_normal_half_one_month()
-    t = coo_matrix(([1 for i in range(0,1000) ], ([1 for i in range(0,1000)],[i for i in range(0,1000)])), shape=test.shape)
-    # precision = lightfm.evaluation.precision_at_k(model, test, train_interactions=train)
-    precision = lightfm.evaluation.precision_at_k(model, t, train_interactions=train)
+def tttt():
+    train2, test2 , model2 = load_normal_half()
+    train , test, model = load_normal_half_with_lt()
+    precision = lightfm.evaluation.precision_at_k(model2, test, train_interactions=train, check_intersections=False)
     n = numpy.count_nonzero(precision)
     print("Precision is")
     print(sum(precision) / n)
+    precision = lightfm.evaluation.precision_at_k(model, test, train_interactions=train, check_intersections=False)
+    n = numpy.count_nonzero(precision)
+    print("Precision is")
+    print(sum(precision) / n)
+    
+if __name__ == "__main__":
+    args = {"percentage" : 0,
+            "uitems_min" : 4,
+            "lt_drop" : 0.0,
+            }
+    train, test = trivago.get_trivago_datasets([], **args)
+    # tttt()
+    # exit(0)
+    # train, test, model = load_normal_half_with_lt()
+    # train, test, model = load_normal_half()
+    # train, test, model = load_normal_half_one_month()
+    # t = coo_matrix(([1 for i in range(0,1000) ], ([1 for i in range(0,1000)],[i for i in range(0,1000)])), shape=test.shape)
+    # precision = lightfm.evaluation.precision_at_k(model, test, train_interactions=train, check_intersections=False)
+    # precision = lightfm.evaluation.precision_at_k(model, t, train_interactions=train)
+    # n = numpy.count_nonzero(precision)
+    # print("Precision is")
+    # print(sum(precision) / n)
 
 
